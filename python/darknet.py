@@ -1,6 +1,7 @@
 from ctypes import *
 import math
 import random
+import numpy as np
 
 def sample(probs):
     s = sum(probs)
@@ -45,7 +46,7 @@ class METADATA(Structure):
     
 
 #lib = CDLL("/home/pjreddie/documents/darknet/libdarknet.so", RTLD_GLOBAL)
-lib = CDLL("libdarknet.so", RTLD_GLOBAL)
+lib = CDLL("darknet/libdarknet.so", RTLD_GLOBAL)
 lib.network_width.argtypes = [c_void_p]
 lib.network_width.restype = c_int
 lib.network_height.argtypes = [c_void_p]
@@ -122,35 +123,59 @@ def classify(net, meta, im):
     res = sorted(res, key=lambda x: -x[1])
     return res
 
+def array_to_image(arr):
+    # need to return old values to avoid python freeing memory
+    arr = arr.transpose(2,0,1)
+    c, h, w = arr.shape[0:3]
+    arr = np.ascontiguousarray(arr.flat, dtype=np.float32) / 255.0
+    data = arr.ctypes.data_as(POINTER(c_float))
+    im = IMAGE(w,h,c,data)
+    return im, arr
+
 def detect(net, meta, image, thresh=.5, hier_thresh=.5, nms=.45):
-    im = load_image(image, 0, 0)
+    if isinstance(image, bytes):  
+        # image is a filename 
+        # i.e. image = b'/darknet/data/dog.jpg'
+        im = load_image(image, 0, 0)
+    else:  
+        # image is an nparray
+        # i.e. image = cv2.imread('/darknet/data/dog.jpg')
+        im, image = array_to_image(image)
+        rgbgr_image(im)
     num = c_int(0)
     pnum = pointer(num)
     predict_image(net, im)
-    dets = get_network_boxes(net, im.w, im.h, thresh, hier_thresh, None, 0, pnum)
+    dets = get_network_boxes(net, im.w, im.h, thresh, 
+                             hier_thresh, None, 0, pnum)
     num = pnum[0]
-    if (nms): do_nms_obj(dets, num, meta.classes, nms);
+    if nms: do_nms_obj(dets, num, meta.classes, nms)
 
     res = []
     for j in range(num):
-        for i in range(meta.classes):
-            if dets[j].prob[i] > 0:
+        a = dets[j].prob[0:meta.classes]
+        if any(a):
+            ai = np.array(a).nonzero()[0]
+            for i in ai:
                 b = dets[j].bbox
-                res.append((meta.names[i], dets[j].prob[i], (b.x, b.y, b.w, b.h)))
+                res.append((meta.names[i], dets[j].prob[i], 
+                           (b.x, b.y, b.w, b.h)))
+
     res = sorted(res, key=lambda x: -x[1])
-    free_image(im)
+    if isinstance(image, bytes): free_image(im)
     free_detections(dets, num)
-    return res
+    wh = (im.w, im.h)
+    return res, wh
+
     
-if __name__ == "__main__":
-    #net = load_net("cfg/densenet201.cfg", "/home/pjreddie/trained/densenet201.weights", 0)
-    #im = load_image("data/wolf.jpg", 0, 0)
-    #meta = load_meta("cfg/imagenet1k.data")
-    #r = classify(net, meta, im)
-    #print r[:10]
-    net = load_net("cfg/tiny-yolo.cfg", "tiny-yolo.weights", 0)
-    meta = load_meta("cfg/coco.data")
-    r = detect(net, meta, "data/dog.jpg")
-    print r
+# if __name__ == "__main__":
+#     #net = load_net("cfg/densenet201.cfg", "/home/pjreddie/trained/densenet201.weights", 0)
+#     #im = load_image("data/wolf.jpg", 0, 0)
+#     #meta = load_meta("cfg/imagenet1k.data")
+#     #r = classify(net, meta, im)
+#     #print r[:10]
+#     net = load_net("cfg/tiny-yolo.cfg", "tiny-yolo.weights", 0)
+#     meta = load_meta("cfg/coco.data")
+#     r = detect(net, meta, "/home/algoscale/old data/Project/vec_rec/carplate/cropped-lp1-20200615-082219760Z.jpg")
+#     print (r)
     
 
